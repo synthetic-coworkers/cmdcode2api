@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -10,8 +11,42 @@ import (
 const configFile = "config.yaml"
 
 func main() {
-	// 找到 config.yaml（先看当前目录，再看可执行文件同目录）
+	oauthMode := flag.Bool("oauth", false, "通过浏览器 OAuth 获取 Command Code API Key")
+	flag.Parse()
+
 	cfgPath := findConfig()
+
+	// --oauth 模式：浏览器登录获取 API Key
+	if *oauthMode {
+		cfg, err := loadConfig(cfgPath)
+		if err != nil {
+			log.Fatalf("load config: %v", err)
+		}
+		if cfg == nil {
+			// 没有配置，先生成一份
+			cfg2 := defaultConfig()
+			if err := saveConfig(cfgPath, &cfg2); err != nil {
+				log.Fatalf("create config: %v", err)
+			}
+			cfg = &cfg2
+		}
+
+		apiKey, err := runOAuth()
+		if err != nil {
+			log.Fatalf("OAuth 失败: %v", err)
+		}
+
+		cfg.CommandCode.APIKey = apiKey
+		if err := saveConfig(cfgPath, cfg); err != nil {
+			log.Fatalf("保存配置失败: %v", err)
+		}
+
+		fmt.Printf("\n✅ API Key 已写入 %s\n", cfgPath)
+		fmt.Println("   现在可以直接运行 cc-gateway 启动服务了。")
+		return
+	}
+
+	// 正常模式
 	cfg, err := loadConfig(cfgPath)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
@@ -28,15 +63,14 @@ func main() {
 ║          cc-gateway — 首次运行                    ║
 ╠══════════════════════════════════════════════════╣
 ║                                                   ║
-║  配置文件已生成：%s
+║  配置已生成：%s
 ║                                                   ║
-║  请编辑此文件，填入你的 Command Code API Key：     ║
-║    commandcode:                                    ║
-║      api_key: "user_xxx"                           ║
+║  接下来用浏览器登录获取 API Key：                  ║
 ║                                                   ║
-║  API Key 获取：https://commandcode.ai/studio       ║
+║    ./cc-gateway --oauth                            ║
 ║                                                   ║
-║  填完后重新运行即可启动。                           ║
+║  登录成功后重新运行即可启动服务。                   ║
+║                                                   ║
 ║  对外 API Key（自动生成）：%s
 ║                                                   ║
 ╚══════════════════════════════════════════════════╝
@@ -46,8 +80,8 @@ func main() {
 
 	// 检查是否填了 CC API Key
 	if cfg.CommandCode.APIKey == "" {
-		fmt.Printf("❌ 请先在 %s 中填入 commandcode.api_key\n", cfgPath)
-		fmt.Println("   获取：https://commandcode.ai/studio")
+		fmt.Printf("❌ 尚未配置 Command Code API Key\n")
+		fmt.Printf("   请运行：./cc-gateway --oauth\n")
 		os.Exit(1)
 	}
 

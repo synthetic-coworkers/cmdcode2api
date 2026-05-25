@@ -1,0 +1,170 @@
+package main
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os/exec"
+	"runtime"
+)
+
+const (
+	oauthPortStart = 5959
+	oauthPortRange = 10
+	studioBaseURL  = "https://commandcode.ai"
+)
+
+type oauthCallback struct {
+	APIKey   string `json:"apiKey"`
+	State    string `json:"state"`
+	UserID   string `json:"userId"`
+	UserName string `json:"userName"`
+	KeyName  string `json:"keyName"`
+}
+
+// generateState 生成随机 state token 防 CSRF
+func generateState() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)
+}
+
+// openBrowser 在默认浏览器中打开 URL
+func openBrowser(url string) error {
+	switch runtime.GOOS {
+	case "linux":
+		return exec.Command("xdg-open", url).Start()
+	case "darwin":
+		return exec.Command("open", url).Start()
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	default:
+		return fmt.Errorf("unsupported OS: %s", runtime.GOOS)
+	}
+}
+
+// runOAuth 启动本地 HTTP server，打开浏览器，等待 CC 回调，返回 API Key。
+func runOAuth() (string, error) {
+	// 找一个可用端口
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", oauthPortStart))
+	if err != nil {
+		// 尝试下一个端口
+		for port := oauthPortStart + 1; port < oauthPortStart+oauthPortRange; port++ {
+			listener, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			return "", fmt.Errorf("无法启动回调服务器: %w", err)
+		}
+	}
+
+	resultCh := make(chan oauthCallback, 1)
+	errCh := make(chan error, 1)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		// CORS
+		w.Header().Set("Access-Control-Allow-Origin", "https://commandcode.ai")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Private-Network", "true")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(204)
+			return
+		}
+
+		if r.Method != "POST" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(405)
+			json.NewEncoder(w).Encode(map[string]any{
+				"success": false,
+				"error":   "method not allowed",
+			})
+			return
+		}
+
+		var cb oauthCallback
+		if err := json.NewDecoder(r.Body).Decode(&cb); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]any{
+				"success": false,
+				"error":   "invalid JSON",
+			})
+			return
+		}
+
+		// 错误回调
+		if errMsg, _ := r.URL.Query()["error"]; len(errMsg) > 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]any{"success": true})
+			errCh <- fmt.Errorf("授权被取消: %s", errMsg[0])
+			return
+		}
+
+		if cb.APIKey == "" || cb.State == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]any{
+				"success": false,
+				"error":   "缺少必要字段",
+			})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(map[string]any{"success": true})
+
+		resultCh <- cb
+	})
+
+	server := &http.Server{Handler: mux}
+	go func() {
+		if err := server.Serve(listener); err != http.ErrServerClosed {
+			// server 被关闭是正常的
+		}
+	}()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	state := generateState()
+	callbackURL := fmt.Sprintf("http://localhost:%d/callback", port)
+	authURL := fmt.Sprintf("%s/studio/auth/cli?callback=%s&state=%s",
+		studioBaseURL, callbackURL, state)
+
+	log.Printf("打开浏览器进行 Command Code 授权...")
+	log.Printf("授权页面: %s", authURL)
+
+	if err := openBrowser(authURL); err != nil {
+		server.Close()
+		return "", fmt.Errorf("无法打开浏览器: %w\n请手动访问: %s", err, authURL)
+	}
+
+	fmt.Println()
+	fmt.Println("⏳ 等待浏览器授权完成...")
+	fmt.Println("   如果浏览器没有自动打开，请手动访问：")
+	fmt.Printf("   %s\n", authURL)
+	fmt.Println()
+
+	// 等待结果或错误
+	select {
+	case cb := <-resultCh:
+		server.Close()
+		if cb.State != state {
+			return "", fmt.Errorf("state token 不匹配，可能被篡改")
+		}
+		log.Printf("✓ 授权成功 — 用户: %s, Key: %s", cb.UserName, cb.KeyName)
+		return cb.APIKey, nil
+	case err := <-errCh:
+		server.Close()
+		return "", err
+	}
+}
