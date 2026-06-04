@@ -57,6 +57,7 @@ type CallFunc struct {
 // 非流式响应
 type ChatResponse struct {
 	ID      string   `json:"id"`
+	Created int64    `json:"created"`
 	Object  string   `json:"object"`
 	Model   string   `json:"model"`
 	Choices []Choice `json:"choices"`
@@ -78,6 +79,7 @@ type Usage struct {
 // 流式响应块
 type ChatStreamChunk struct {
 	ID      string         `json:"id"`
+	Created int64          `json:"created"`
 	Object  string         `json:"object"`
 	Model   string         `json:"model"`
 	Choices []StreamChoice `json:"choices"`
