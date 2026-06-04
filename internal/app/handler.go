@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 )
 
 const maxChatRequestBytes = 50 * 1024 * 1024
@@ -88,6 +89,7 @@ func handleStream(w http.ResponseWriter, resp *http.Response, model string, usag
 			}
 			chunk := ChatStreamChunk{
 				ID:     genStreamID(),
+				Created: time.Now().Unix(),
 				Object: "chat.completion.chunk",
 				Model:  model,
 				Choices: []StreamChoice{{
@@ -106,6 +108,7 @@ func handleStream(w http.ResponseWriter, resp *http.Response, model string, usag
 			}
 			chunk := ChatStreamChunk{
 				ID:     genStreamID(),
+				Created: time.Now().Unix(),
 				Object: "chat.completion.chunk",
 				Model:  model,
 				Choices: []StreamChoice{{
@@ -126,6 +129,7 @@ func handleStream(w http.ResponseWriter, resp *http.Response, model string, usag
 			argsJSON, _ := json.Marshal(input)
 			chunk := ChatStreamChunk{
 				ID:     genStreamID(),
+				Created: time.Now().Unix(),
 				Object: "chat.completion.chunk",
 				Model:  model,
 				Choices: []StreamChoice{{
@@ -175,6 +179,7 @@ func handleStream(w http.ResponseWriter, resp *http.Response, model string, usag
 
 			chunk := ChatStreamChunk{
 				ID:     genStreamID(),
+				Created: time.Now().Unix(),
 				Object: "chat.completion.chunk",
 				Model:  model,
 				Choices: []StreamChoice{{
@@ -324,6 +329,7 @@ func handleNonStream(w http.ResponseWriter, resp *http.Response, model string, u
 
 	res := ChatResponse{
 		ID:     genStreamID(),
+		Created: time.Now().Unix(),
 		Object: "chat.completion",
 		Model:  model,
 		Choices: []Choice{{
