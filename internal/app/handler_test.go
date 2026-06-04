@@ -149,6 +149,9 @@ func TestHandleNonStreamNormalizesFinishReason(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v body = %s", err, rec.Body.String())
 	}
+	if got.Created == 0 {
+		t.Fatalf("created = %d, want non-zero", got.Created)
+	}
 	if got.Choices[0].FinishReason != "length" {
 		t.Fatalf("finish_reason = %q, want length", got.Choices[0].FinishReason)
 	}
@@ -239,6 +242,12 @@ func TestHandleStreamEmitsDoneOnceWithFinishStep(t *testing.T) {
 	}
 	if !strings.Contains(body, `"finish_reason":"stop"`) {
 		t.Fatalf("body missing finish chunk: %s", body)
+	}
+	if !strings.Contains(body, `"created":`) {
+		t.Fatalf("body missing created field: %s", body)
+	}
+	if strings.Contains(body, `"created":0`) {
+		t.Fatalf("created field zero: %s", body)
 	}
 }
 
